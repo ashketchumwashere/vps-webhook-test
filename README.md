@@ -1,2 +1,3 @@
 # vps-webhook-test
-Webhook delivery SSRF test — VPS interception research
+Webhook delivery research test repo.
+Every push to this repo triggers a webhook to the research VPS.
